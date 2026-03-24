@@ -100,6 +100,15 @@ test_command_rejects_empty_args :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_del_single_key_not_connected :: proc(t: ^testing.T) {
+	client := Client{}
+	reply, err := del(&client, "odis:test:key")
+	defer destroy_reply(&reply)
+
+	testing.expect_value(t, err, Error.Not_Connected)
+}
+
+@(test)
 test_reply_to_int :: proc(t: ^testing.T) {
 	testing.expect_value(t, reply_to_int(Reply{kind = .Integer, integer = 42}), 42)
 	testing.expect_value(t, reply_to_int(Reply{kind = .Bulk_String, text = "17"}), 17)

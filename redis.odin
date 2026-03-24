@@ -255,7 +255,7 @@ Inputs:
 
 Returns: server reply and optional error
 */
-del :: proc(client: ^Client, keys: []string) -> (Reply, Error) {
+del_many :: proc(client: ^Client, keys: []string) -> (Reply, Error) {
 	args := make([dynamic]string, 0, len(keys) + 1)
 	defer delete(args)
 	append(&args, "DEL")
@@ -263,6 +263,24 @@ del :: proc(client: ^Client, keys: []string) -> (Reply, Error) {
 		append(&args, key)
 	}
 	return command(client, args[:])
+}
+
+/*
+Deletes a single Redis key.
+
+Inputs:
+- client: connected Redis client
+- key: key to delete
+
+Returns: server reply and optional error
+*/
+del_one :: proc(client: ^Client, key: string) -> (Reply, Error) {
+	return del_many(client, []string{key})
+}
+
+del :: proc{
+	del_one,
+	del_many,
 }
 
 /*
