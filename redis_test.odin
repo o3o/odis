@@ -100,6 +100,41 @@ test_command_rejects_empty_args :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_reply_to_int :: proc(t: ^testing.T) {
+	testing.expect_value(t, reply_to_int(Reply{kind = .Integer, integer = 42}), 42)
+	testing.expect_value(t, reply_to_int(Reply{kind = .Bulk_String, text = "17"}), 17)
+	testing.expect_value(t, reply_to_int(Reply{kind = .Simple_String, text = "-5"}), -5)
+	testing.expect_value(t, reply_to_int(Reply{kind = .Bulk_String, text = "x"}), 0)
+	testing.expect_value(t, reply_to_int(Reply{kind = .Error, text = "ERR nope"}), 0)
+	testing.expect_value(t, reply_to_int(Reply{kind = .Null}), 0)
+}
+
+@(test)
+test_reply_to_bool :: proc(t: ^testing.T) {
+	testing.expect_value(t, reply_to_bool(Reply{kind = .Integer, integer = 1}), true)
+	testing.expect_value(t, reply_to_bool(Reply{kind = .Integer, integer = 0}), false)
+	testing.expect_value(t, reply_to_bool(Reply{kind = .Bulk_String, text = "true"}), true)
+	testing.expect_value(t, reply_to_bool(Reply{kind = .Bulk_String, text = "t"}), true)
+	testing.expect_value(t, reply_to_bool(Reply{kind = .Bulk_String, text = "TRUE"}), true)
+	testing.expect_value(t, reply_to_bool(Reply{kind = .Bulk_String, text = "TR"}), false)
+	testing.expect_value(t, reply_to_bool(Reply{kind = .Bulk_String, text = "T"}), true)
+	testing.expect_value(t, reply_to_bool(Reply{kind = .Bulk_String, text = "1"}), true)
+	testing.expect_value(t, reply_to_bool(Reply{kind = .Simple_String, text = "0"}), false)
+	testing.expect_value(t, reply_to_bool(Reply{kind = .Bulk_String, text = "x"}), false)
+	testing.expect_value(t, reply_to_bool(Reply{kind = .Null}), false)
+}
+
+@(test)
+test_reply_to_f64 :: proc(t: ^testing.T) {
+	testing.expect_value(t, reply_to_f64(Reply{kind = .Integer, integer = 7}), f64(7.0))
+	testing.expect_value(t, reply_to_f64(Reply{kind = .Bulk_String, text = "3.14"}), f64(3.14))
+	testing.expect_value(t, reply_to_f64(Reply{kind = .Simple_String, text = "-2.5"}), f64(-2.5))
+	testing.expect_value(t, reply_to_f64(Reply{kind = .Bulk_String, text = "x"}), f64(0.0))
+	testing.expect_value(t, reply_to_f64(Reply{kind = .Error, text = "ERR nope"}), f64(0.0))
+	testing.expect_value(t, reply_to_f64(Reply{kind = .Null}), f64(0.0))
+}
+
+@(test)
 test_get_missing_key_returns_null :: proc(t: ^testing.T) {
 	ctx := connect_test_client(t)
 	if ctx == nil {

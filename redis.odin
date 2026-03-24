@@ -266,6 +266,87 @@ del :: proc(client: ^Client, keys: []string) -> (Reply, Error) {
 }
 
 /*
+Returns the integer value represented by a Redis reply.
+
+It accepts native RESP integers and textual replies containing base-10 integers.
+Any unsupported kind or parse failure returns zero.
+
+Inputs:
+- reply: reply to convert
+
+Returns: converted integer, or zero on errors
+*/
+reply_to_int :: proc(reply: Reply) -> int {
+	switch reply.kind {
+	case .Integer:
+		return int(reply.integer)
+	case .Bulk_String, .Simple_String:
+		value, ok := strconv.parse_int(reply.text, 10)
+		if !ok {
+			return 0
+		}
+		return int(value)
+	case .Error, .Array, .Null:
+		return 0
+	}
+	return 0
+}
+
+/*
+Returns the boolean value represented by a Redis reply.
+
+It accepts native RESP integers and textual replies parseable as booleans.
+Any unsupported kind or parse failure returns false.
+
+Inputs:
+- reply: reply to convert
+
+Returns: converted boolean, or false on errors
+*/
+reply_to_bool :: proc(reply: Reply) -> bool {
+	switch reply.kind {
+	case .Integer:
+		return reply.integer != 0
+	case .Bulk_String, .Simple_String:
+		value, ok := strconv.parse_bool(reply.text)
+		if !ok {
+			return false
+		}
+		return value
+	case .Error, .Array, .Null:
+		return false
+	}
+	return false
+}
+
+/*
+Returns the floating-point value represented by a Redis reply.
+
+It accepts native RESP integers and textual replies parseable as `f64`.
+Any unsupported kind or parse failure returns 0.0.
+
+Inputs:
+- reply: reply to convert
+
+Returns: converted float, or 0.0 on errors
+*/
+reply_to_f64 :: proc(reply: Reply) -> f64 {
+	switch reply.kind {
+	case .Integer:
+		return f64(reply.integer)
+	case .Bulk_String, .Simple_String:
+		value, ok := strconv.parse_f64(reply.text)
+		if !ok {
+			return 0.0
+		}
+		return value
+	case .Error, .Array, .Null:
+		return 0.0
+	}
+	return 0.0
+}
+
+/*
 Sends a generic Redis command.
 
 It serializes the arguments as RESP, sends them on the socket, and reads the reply.

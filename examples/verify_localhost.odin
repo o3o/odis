@@ -46,6 +46,9 @@ main :: proc() {
 	expect(get_err == .None, "GET returned an error")
 	expect(get_reply.kind == .Bulk_String, "GET reply kind mismatch")
 	expect(get_reply.text == "42", "GET reply text mismatch")
+	expect(redis.reply_to_int(get_reply) == 42, "GET reply text mismatch")
+	expect(redis.reply_to_f64(get_reply) == f64(42.), "reply_to_f64  error")
+	expect(!redis.reply_to_bool(get_reply), "reply_to_bool error")
 
 	del_reply, del_err := redis.del(&client, []string{key})
 	expect(del_err == .None, "DEL returned an error")

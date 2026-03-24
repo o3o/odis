@@ -1,4 +1,4 @@
-.PHONY: check test tags format
+.PHONY: check test tags format doc
 
 check:
 	odin check . -no-entry-point
@@ -11,3 +11,5 @@ tags:
 
 format:
 	odinfmt -w .
+doc:
+	odin doc . 
