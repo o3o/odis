@@ -7,7 +7,7 @@ import "core:testing"
 import "core:time"
 
 TEST_REDIS_ADDR :: "127.0.0.1:6379"
-ALPHABET        :: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
+ALPHABET :: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
 
 test_client_context :: struct {
 	client: Client,
@@ -31,7 +31,13 @@ destroy_test_client_context :: proc(data: rawptr) {
 
 connect_test_client :: proc(t: ^testing.T) -> ^test_client_context {
 	client, err := connect(Config{address = TEST_REDIS_ADDR})
-	if !testing.expectf(t, err == .None, "unable to connect to redis at %s: %v", TEST_REDIS_ADDR, err) {
+	if !testing.expectf(
+		t,
+		err == .None,
+		"unable to connect to redis at %s: %v",
+		TEST_REDIS_ADDR,
+		err,
+	) {
 		return nil
 	}
 
@@ -43,7 +49,13 @@ connect_test_client :: proc(t: ^testing.T) -> ^test_client_context {
 
 connect_test_client_no_cleanup :: proc(t: ^testing.T) -> ^test_client_context {
 	client, err := connect(Config{address = TEST_REDIS_ADDR})
-	if !testing.expectf(t, err == .None, "unable to connect to redis at %s: %v", TEST_REDIS_ADDR, err) {
+	if !testing.expectf(
+		t,
+		err == .None,
+		"unable to connect to redis at %s: %v",
+		TEST_REDIS_ADDR,
+		err,
+	) {
 		return nil
 	}
 
@@ -57,7 +69,7 @@ random_string :: proc(length: int, gen: rand.Generator) -> string {
 	buf := make([]byte, length)
 	defer delete(buf)
 
-	for i in 0..<length {
+	for i in 0 ..< length {
 		buf[i] = alphabet[rand.int_max(len(alphabet), gen)]
 	}
 
@@ -77,7 +89,12 @@ cleanup_key :: proc(ctx: ^test_client_context, key: string) {
 	}
 }
 
-assert_ok_reply :: proc(t: ^testing.T, reply: Reply, err: Error, expected_kind: Reply_Kind) -> bool {
+assert_ok_reply :: proc(
+	t: ^testing.T,
+	reply: Reply,
+	err: Error,
+	expected_kind: Reply_Kind,
+) -> bool {
 	if !testing.expect_value(t, err, Error.None) {
 		return false
 	}
@@ -174,7 +191,7 @@ test_set_get_del_roundtrip_random_values :: proc(t: ^testing.T) {
 	state := rand.create(t.seed)
 	gen := rand.default_random_generator(&state)
 
-	for i in 0..<50 {
+	for i in 0 ..< 50 {
 		key := random_key("odis:test:roundtrip:", gen)
 		value := random_string(1 + rand.int_max(128, gen), gen)
 
@@ -266,7 +283,7 @@ randomized_client_roundtrip_leak_check :: proc(t: ^testing.T) {
 	state := rand.create(t.seed + 0x9e3779b97f4a7c15)
 	gen := rand.default_random_generator(&state)
 
-	for _ in 0..<20 {
+	for _ in 0 ..< 20 {
 		key := random_key("odis:test:leak-check:", gen)
 		value := random_string(32 + rand.int_max(96, gen), gen)
 
@@ -295,5 +312,9 @@ randomized_client_roundtrip_leak_verifier :: proc(t: ^testing.T, ta: ^mem.Tracki
 
 @(test)
 test_random_roundtrip_has_no_leaks :: proc(t: ^testing.T) {
-	testing.expect_leaks(t, randomized_client_roundtrip_leak_check, randomized_client_roundtrip_leak_verifier)
+	testing.expect_leaks(
+		t,
+		randomized_client_roundtrip_leak_check,
+		randomized_client_roundtrip_leak_verifier,
+	)
 }

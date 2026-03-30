@@ -1,9 +1,10 @@
 package main
 
+import redis ".."
 import "core:fmt"
 import "core:mem"
+import vmem "core:mem/virtual"
 import "core:os"
-import redis ".."
 
 expect :: proc(ok: bool, message: string) {
 	if ok {
@@ -19,30 +20,39 @@ main :: proc() {
 	mem.tracking_allocator_init(&tracker, base_allocator)
 	tracker.bad_free_callback = mem.tracking_allocator_bad_free_callback_add_to_array
 	defer mem.tracking_allocator_destroy(&tracker)
-	context.allocator = mem.tracking_allocator(&tracker)
+	tracking_allocator := mem.tracking_allocator(&tracker)
+	context.allocator = tracking_allocator
 	defer context.allocator = base_allocator
 
-	client, err := redis.connect(redis.Config{
-		address = "127.0.0.1:6379",
-	})
+	reply_arena: vmem.Arena
+	if arena_err := vmem.arena_init_growing(&reply_arena); arena_err != nil {
+		fmt.eprintln("arena init error:", arena_err)
+		os.exit(1)
+	}
+	reply_allocator := vmem.arena_allocator(&reply_arena)
+
+	client, err := redis.connect(redis.Config{address = "127.0.0.1:6379"}, tracking_allocator)
 	if err != .None {
 		fmt.eprintln("connect error:", err)
 		os.exit(1)
 	}
 
-	ping_reply, ping_err := redis.ping(&client, "odin")
+	ping_reply, ping_err := redis.ping(&client, "odin", reply_allocator)
 	expect(ping_err == .None, "PING returned an error")
-	expect(ping_reply.kind == .Bulk_String || ping_reply.kind == .Simple_String, "PING reply kind mismatch")
+	expect(
+		ping_reply.kind == .Bulk_String || ping_reply.kind == .Simple_String,
+		"PING reply kind mismatch",
+	)
 	expect(ping_reply.text == "odin", "PING reply payload mismatch")
 
 	key := "odis:verify:example"
 
-	set_reply, set_err := redis.set(&client, key, "42")
+	set_reply, set_err := redis.set(&client, key, "42", reply_allocator)
 	expect(set_err == .None, "SET returned an error")
 	expect(set_reply.kind == .Simple_String, "SET reply kind mismatch")
 	expect(set_reply.text == "OK", "SET reply text mismatch")
 
-	get_reply, get_err := redis.get(&client, key)
+	get_reply, get_err := redis.get(&client, key, reply_allocator)
 	expect(get_err == .None, "GET returned an error")
 	expect(get_reply.kind == .Bulk_String, "GET reply kind mismatch")
 	expect(get_reply.text == "42", "GET reply text mismatch")
@@ -50,15 +60,13 @@ main :: proc() {
 	expect(redis.reply_to_f64(get_reply) == f64(42.), "reply_to_f64  error")
 	expect(!redis.reply_to_bool(get_reply), "reply_to_bool error")
 
-	del_reply, del_err := redis.del(&client, []string{key})
+	del_reply, del_err := redis.del(&client, []string{key}, reply_allocator)
 	expect(del_err == .None, "DEL returned an error")
 	expect(del_reply.kind == .Integer, "DEL reply kind mismatch")
 	expect(del_reply.integer == 1, "DEL reply integer mismatch")
 
-	redis.destroy_reply(&del_reply)
-	redis.destroy_reply(&get_reply)
-	redis.destroy_reply(&set_reply)
-	redis.destroy_reply(&ping_reply)
+	mem.free_all(reply_allocator)
+	vmem.arena_destroy(&reply_arena)
 	redis.close(&client)
 
 	if len(tracker.allocation_map) != 0 || len(tracker.bad_free_array) != 0 {

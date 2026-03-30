@@ -1,5 +1,6 @@
 package redis
 
+import "core:mem"
 import "core:net"
 import "core:strconv"
 import "core:strings"
@@ -24,11 +25,7 @@ Config :: struct {
 }
 
 default_config :: proc() -> Config {
-	return Config{
-		address  = "127.0.0.1:6379",
-		password = "",
-		db       = 0,
-	}
+	return Config{address = "127.0.0.1:6379", password = "", db = 0}
 }
 
 Reply_Kind :: enum i32 {
@@ -50,6 +47,7 @@ Reply :: struct {
 Client :: struct {
 	socket:            net.TCP_Socket,
 	connected:         bool,
+	allocator:         mem.Allocator,
 	buffer:            [dynamic]byte,
 	buffer_start:      int,
 	last_server_error: string,
@@ -62,13 +60,14 @@ Deallocates the associated text and any nested replies stored inside arrays.
 
 Inputs:
 - reply: reply to destroy
+- allocator: allocator used to build the reply
 
 Returns: no values
 */
-destroy_reply :: proc(reply: ^Reply) {
-	delete(reply.text)
-	for i in 0..<len(reply.elements) {
-		destroy_reply(&reply.elements[i])
+destroy_reply :: proc(reply: ^Reply, allocator := context.allocator) {
+	delete(reply.text, allocator)
+	for i in 0 ..< len(reply.elements) {
+		destroy_reply(&reply.elements[i], allocator)
 	}
 	delete(reply.elements)
 	reply^ = {}
@@ -92,7 +91,7 @@ close :: proc(client: ^Client) {
 	delete(client.buffer)
 	client.buffer = nil
 	client.buffer_start = 0
-	delete(client.last_server_error)
+	delete(client.last_server_error, client.allocator)
 	client.last_server_error = ""
 }
 
@@ -103,10 +102,17 @@ It also applies any `AUTH` and `SELECT` commands required by the configuration.
 
 Inputs:
 - config: connection configuration
+- allocator: allocator used for client-owned memory
 
 Returns: connected client and optional error
 */
-connect_with_config :: proc(config: Config) -> (client: Client, err: Error) {
+connect_with_config :: proc(
+	config: Config,
+	allocator := context.allocator,
+) -> (
+	client: Client,
+	err: Error,
+) {
 	address := config.address
 	if len(address) == 0 {
 		address = "127.0.0.1:6379"
@@ -119,16 +125,18 @@ connect_with_config :: proc(config: Config) -> (client: Client, err: Error) {
 
 	client.socket = socket
 	client.connected = true
+	client.allocator = allocator
+	client.buffer = make([dynamic]byte, 0, 0, allocator)
 
 	if len(config.password) > 0 {
-		auth_reply, auth_err := command(&client, []string{"AUTH", config.password})
+		auth_reply, auth_err := command(&client, []string{"AUTH", config.password}, allocator)
 		if auth_err != .None {
 			close(&client)
 			return {}, auth_err
 		}
-		defer destroy_reply(&auth_reply)
+		defer destroy_reply(&auth_reply, allocator)
 		if auth_reply.kind == .Error {
-			client.last_server_error = strings.clone(auth_reply.text)
+			client.last_server_error = strings.clone(auth_reply.text, client.allocator)
 			close(&client)
 			return {}, .Server_Error
 		}
@@ -137,14 +145,14 @@ connect_with_config :: proc(config: Config) -> (client: Client, err: Error) {
 	if config.db != 0 {
 		db_buf: [32]byte
 		db_text := strconv.write_int(db_buf[:], i64(config.db), 10)
-		select_reply, select_err := command(&client, []string{"SELECT", db_text})
+		select_reply, select_err := command(&client, []string{"SELECT", db_text}, allocator)
 		if select_err != .None {
 			close(&client)
 			return {}, select_err
 		}
-		defer destroy_reply(&select_reply)
+		defer destroy_reply(&select_reply, allocator)
 		if select_reply.kind == .Error {
-			client.last_server_error = strings.clone(select_reply.text)
+			client.last_server_error = strings.clone(select_reply.text, client.allocator)
 			close(&client)
 			return {}, .Server_Error
 		}
@@ -159,15 +167,15 @@ Creates a Redis connection using the default configuration.
 It uses `127.0.0.1:6379` with no authentication and no additional `SELECT`.
 
 Inputs:
-- none
+- allocator: allocator used for client-owned memory
 
 Returns: connected client and optional error
 */
-connect_default :: proc() -> (Client, Error) {
-	return connect_with_config(default_config())
+connect_default :: proc(allocator := context.allocator) -> (Client, Error) {
+	return connect_with_config(default_config(), allocator)
 }
 
-connect :: proc{
+connect :: proc {
 	connect_default,
 	connect_with_config,
 }
@@ -180,14 +188,15 @@ If `message` is provided, Redis returns it as the reply payload.
 Inputs:
 - client: connected Redis client
 - message: optional ping payload
+- allocator: allocator used for the returned reply
 
 Returns: server reply and optional error
 */
-ping :: proc(client: ^Client, message := "") -> (Reply, Error) {
+ping :: proc(client: ^Client, message := "", allocator := context.allocator) -> (Reply, Error) {
 	if len(message) == 0 {
-		return command(client, []string{"PING"})
+		return command(client, []string{"PING"}, allocator)
 	}
-	return command(client, []string{"PING", message})
+	return command(client, []string{"PING", message}, allocator)
 }
 
 /*
@@ -198,11 +207,12 @@ Internally it sends the `GET` command.
 Inputs:
 - client: connected Redis client
 - key: key to read
+- allocator: allocator used for the returned reply
 
 Returns: server reply and optional error
 */
-get :: proc(client: ^Client, key: string) -> (Reply, Error) {
-	return command(client, []string{"GET", key})
+get :: proc(client: ^Client, key: string, allocator := context.allocator) -> (Reply, Error) {
+	return command(client, []string{"GET", key}, allocator)
 }
 
 /*
@@ -214,11 +224,19 @@ Inputs:
 - client: connected Redis client
 - key: key to write
 - value: value to store
+- allocator: allocator used for the returned reply
 
 Returns: server reply and optional error
 */
-set :: proc(client: ^Client, key, value: string) -> (Reply, Error) {
-	return command(client, []string{"SET", key, value})
+set :: proc(
+	client: ^Client,
+	key, value: string,
+	allocator := context.allocator,
+) -> (
+	Reply,
+	Error,
+) {
+	return command(client, []string{"SET", key, value}, allocator)
 }
 
 /*
@@ -231,17 +249,26 @@ Inputs:
 - key: key to write
 - value: value to store
 - seconds: TTL expressed in seconds
+- allocator: allocator used for the returned reply
 
 Returns: server reply and optional error
 */
-set_ex :: proc(client: ^Client, key, value: string, seconds: int) -> (Reply, Error) {
+set_ex :: proc(
+	client: ^Client,
+	key, value: string,
+	seconds: int,
+	allocator := context.allocator,
+) -> (
+	Reply,
+	Error,
+) {
 	if seconds <= 0 {
 		return {}, .Invalid_Argument
 	}
 
 	seconds_buf: [32]byte
 	seconds_text := strconv.write_int(seconds_buf[:], i64(seconds), 10)
-	return command(client, []string{"SET", key, value, "EX", seconds_text})
+	return command(client, []string{"SET", key, value, "EX", seconds_text}, allocator)
 }
 
 /*
@@ -252,17 +279,29 @@ It dynamically builds the `DEL` command using all provided keys.
 Inputs:
 - client: connected Redis client
 - keys: keys to delete
+- allocator: allocator used for the returned reply
 
 Returns: server reply and optional error
 */
-del_many :: proc(client: ^Client, keys: []string) -> (Reply, Error) {
-	args := make([dynamic]string, 0, len(keys) + 1)
-	defer delete(args)
-	append(&args, "DEL")
-	for key in keys {
-		append(&args, key)
+del_many :: proc(
+	client: ^Client,
+	keys: []string,
+	allocator := context.allocator,
+) -> (
+	Reply,
+	Error,
+) {
+	if !client.connected {
+		return {}, .Not_Connected
 	}
-	return command(client, args[:])
+
+	args := make([]string, len(keys) + 1, client.allocator)
+	defer delete(args, client.allocator)
+	args[0] = "DEL"
+	for key, i in keys {
+		args[i + 1] = key
+	}
+	return command(client, args, allocator)
 }
 
 /*
@@ -271,14 +310,15 @@ Deletes a single Redis key.
 Inputs:
 - client: connected Redis client
 - key: key to delete
+- allocator: allocator used for the returned reply
 
 Returns: server reply and optional error
 */
-del_one :: proc(client: ^Client, key: string) -> (Reply, Error) {
-	return del_many(client, []string{key})
+del_one :: proc(client: ^Client, key: string, allocator := context.allocator) -> (Reply, Error) {
+	return del_many(client, []string{key}, allocator)
 }
 
-del :: proc{
+del :: proc {
 	del_one,
 	del_many,
 }
@@ -372,10 +412,18 @@ It serializes the arguments as RESP, sends them on the socket, and reads the rep
 Inputs:
 - client: connected Redis client
 - args: command arguments, with the command name in position zero
+- allocator: allocator used for the returned reply
 
 Returns: server reply and optional error
 */
-command :: proc(client: ^Client, args: []string) -> (Reply, Error) {
+command :: proc(
+	client: ^Client,
+	args: []string,
+	allocator := context.allocator,
+) -> (
+	Reply,
+	Error,
+) {
 	if !client.connected {
 		return {}, .Not_Connected
 	}
@@ -383,10 +431,10 @@ command :: proc(client: ^Client, args: []string) -> (Reply, Error) {
 		return {}, .Invalid_Argument
 	}
 
-	delete(client.last_server_error)
+	delete(client.last_server_error, client.allocator)
 	client.last_server_error = ""
 
-	payload := encode_command(args)
+	payload := encode_command(args, client.allocator)
 	defer delete(payload)
 
 	written, send_err := net.send_tcp(client.socket, payload[:])
@@ -394,9 +442,9 @@ command :: proc(client: ^Client, args: []string) -> (Reply, Error) {
 		return {}, .Send_Failed
 	}
 
-	reply, reply_err := read_reply(client)
+	reply, reply_err := read_reply(client, allocator)
 	if reply_err == .Server_Error {
-		client.last_server_error = strings.clone(reply.text)
+		client.last_server_error = strings.clone(reply.text, client.allocator)
 	}
 	return reply, reply_err
 }
@@ -408,12 +456,17 @@ The result is ready to be sent directly over the TCP socket.
 
 Inputs:
 - args: Redis command arguments
+- allocator: allocator used for the serialized payload
 
 Returns: dynamic buffer containing the serialized payload
 */
-encode_command :: proc(args: []string) -> [dynamic]byte {
-	builder := strings.builder_make()
-	defer strings.builder_destroy(&builder)
+encode_command :: proc(args: []string, allocator := context.allocator) -> [dynamic]byte {
+	prev_allocator := context.allocator
+	context.allocator = allocator
+	defer context.allocator = prev_allocator
+
+	builder := strings.builder_make(allocator)
+	defer delete(builder.buf)
 
 	strings.write_byte(&builder, '*')
 	strings.write_int(&builder, len(args))
@@ -427,7 +480,7 @@ encode_command :: proc(args: []string) -> [dynamic]byte {
 		strings.write_string(&builder, "\r\n")
 	}
 
-	result := make([dynamic]byte, len(builder.buf))
+	result := make([dynamic]byte, len(builder.buf), len(builder.buf), allocator)
 	copy(result[:], builder.buf[:])
 	return result
 }
@@ -439,10 +492,11 @@ It recognizes the main RESP prefixes and delegates to specialized parsers when n
 
 Inputs:
 - client: connected Redis client
+- allocator: allocator used for the returned reply tree
 
 Returns: decoded reply and optional error
 */
-read_reply :: proc(client: ^Client) -> (Reply, Error) {
+read_reply :: proc(client: ^Client, allocator := context.allocator) -> (Reply, Error) {
 	if err := ensure_buffered(client, 1); err != .None {
 		return {}, err
 	}
@@ -452,37 +506,37 @@ read_reply :: proc(client: ^Client) -> (Reply, Error) {
 
 	switch prefix {
 	case '+':
-		line, err := read_line(client)
+		line, err := read_line(client, allocator)
 		if err != .None {
 			return {}, err
 		}
-		defer delete(line)
-		return Reply{kind = .Simple_String, text = strings.clone(line)}, .None
+		defer delete(line, allocator)
+		return Reply{kind = .Simple_String, text = strings.clone(line, allocator)}, .None
 	case '-':
-		line, err := read_line(client)
+		line, err := read_line(client, allocator)
 		if err != .None {
 			return {}, err
 		}
-		defer delete(line)
-		return Reply{kind = .Error, text = strings.clone(line)}, .Server_Error
+		defer delete(line, allocator)
+		return Reply{kind = .Error, text = strings.clone(line, allocator)}, .Server_Error
 	case ':':
-		line, err := read_line(client)
+		line, err := read_line(client, allocator)
 		if err != .None {
 			return {}, err
 		}
-		defer delete(line)
+		defer delete(line, allocator)
 		value, ok := strconv.parse_int(line, 10)
 		if !ok {
 			return {}, .Integer_Parse_Failed
 		}
 		return Reply{kind = .Integer, integer = i64(value)}, .None
 	case '$':
-		return read_bulk_string_reply(client)
+		return read_bulk_string_reply(client, allocator)
 	case '*':
-		return read_array_reply(client)
+		return read_array_reply(client, allocator)
 	case:
-			return {}, .Invalid_Reply
-		}
+		return {}, .Invalid_Reply
+	}
 }
 
 /*
@@ -492,15 +546,16 @@ It also handles the special `null bulk string` case.
 
 Inputs:
 - client: connected Redis client
+- allocator: allocator used for the returned reply
 
 Returns: bulk string or null reply and optional error
 */
-read_bulk_string_reply :: proc(client: ^Client) -> (Reply, Error) {
-	line, err := read_line(client)
+read_bulk_string_reply :: proc(client: ^Client, allocator := context.allocator) -> (Reply, Error) {
+	line, err := read_line(client, allocator)
 	if err != .None {
 		return {}, err
 	}
-	defer delete(line)
+	defer delete(line, allocator)
 
 	size, ok := strconv.parse_int(line, 10)
 	if !ok {
@@ -520,11 +575,11 @@ read_bulk_string_reply :: proc(client: ^Client) -> (Reply, Error) {
 
 	start := client.buffer_start
 	stop := start + size
-	if client.buffer[stop] != '\r' || client.buffer[stop+1] != '\n' {
+	if client.buffer[stop] != '\r' || client.buffer[stop + 1] != '\n' {
 		return {}, .Invalid_Reply
 	}
 
-	text := strings.clone(string(client.buffer[start:stop]))
+	text := strings.clone(string(client.buffer[start:stop]), allocator)
 	client.buffer_start += total
 	compact_buffer(client)
 
@@ -538,15 +593,16 @@ Each element is read recursively through `read_reply`.
 
 Inputs:
 - client: connected Redis client
+- allocator: allocator used for the returned reply tree
 
 Returns: array or null reply and optional error
 */
-read_array_reply :: proc(client: ^Client) -> (Reply, Error) {
-	line, err := read_line(client)
+read_array_reply :: proc(client: ^Client, allocator := context.allocator) -> (Reply, Error) {
+	line, err := read_line(client, allocator)
 	if err != .None {
 		return {}, err
 	}
-	defer delete(line)
+	defer delete(line, allocator)
 
 	count, ok := strconv.parse_int(line, 10)
 	if !ok {
@@ -559,17 +615,17 @@ read_array_reply :: proc(client: ^Client) -> (Reply, Error) {
 		return {}, .Invalid_Reply
 	}
 
-	elements := make([dynamic]Reply, 0, count)
-	for _ in 0..<count {
-		item, item_err := read_reply(client)
+	elements := make([dynamic]Reply, count, count, allocator)
+	for i in 0 ..< count {
+		item, item_err := read_reply(client, allocator)
 		if item_err != .None && item_err != .Server_Error {
-			for i in 0..<len(elements) {
-				destroy_reply(&elements[i])
+			for j in 0 ..< i {
+				destroy_reply(&elements[j], allocator)
 			}
 			delete(elements)
 			return {}, item_err
 		}
-		append(&elements, item)
+		elements[i] = item
 	}
 
 	return Reply{kind = .Array, elements = elements}, .None
@@ -582,14 +638,15 @@ The returned string is an allocated copy of the parsed content.
 
 Inputs:
 - client: connected Redis client
+- allocator: allocator used for the returned line copy
 
 Returns: read line and optional error
 */
-read_line :: proc(client: ^Client) -> (string, Error) {
+read_line :: proc(client: ^Client, allocator := context.allocator) -> (string, Error) {
 	for {
-		for i in client.buffer_start..<len(client.buffer)-1 {
-			if client.buffer[i] == '\r' && client.buffer[i+1] == '\n' {
-				line := strings.clone(string(client.buffer[client.buffer_start:i]))
+		for i in client.buffer_start ..< len(client.buffer) - 1 {
+			if client.buffer[i] == '\r' && client.buffer[i + 1] == '\n' {
+				line := strings.clone(string(client.buffer[client.buffer_start:i]), allocator)
 				client.buffer_start = i + 2
 				compact_buffer(client)
 				return line, .None
@@ -614,7 +671,7 @@ Inputs:
 Returns: optional receive or protocol error
 */
 ensure_buffered :: proc(client: ^Client, needed: int) -> Error {
-	for len(client.buffer)-client.buffer_start < needed {
+	for len(client.buffer) - client.buffer_start < needed {
 		if err := recv_more(client); err != .None {
 			return err
 		}
@@ -648,6 +705,9 @@ recv_more :: proc(client: ^Client) -> Error {
 		return .Unexpected_EOF
 	}
 
+	prev_allocator := context.allocator
+	context.allocator = client.allocator
+	defer context.allocator = prev_allocator
 	append(&client.buffer, ..temp[:n])
 	return .None
 }
@@ -671,7 +731,7 @@ compact_buffer :: proc(client: ^Client) {
 		client.buffer_start = 0
 		return
 	}
-	if client.buffer_start < 1024 && client.buffer_start*2 < len(client.buffer) {
+	if client.buffer_start < 1024 && client.buffer_start * 2 < len(client.buffer) {
 		return
 	}
 
