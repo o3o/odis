@@ -551,9 +551,9 @@ Inputs:
 Returns: bulk string or null reply and optional error
 */
 read_bulk_string_reply :: proc(client: ^Client, allocator := context.allocator) -> (Reply, Error) {
-	line, err := read_line(client, allocator)
-	if err != .None {
-		return {}, err
+	line, read_err := read_line(client, allocator)
+	if read_err != .None {
+		return {}, read_err
 	}
 	defer delete(line, allocator)
 

@@ -191,7 +191,7 @@ test_set_get_del_roundtrip_random_values :: proc(t: ^testing.T) {
 	state := rand.create(t.seed)
 	gen := rand.default_random_generator(&state)
 
-	for i in 0 ..< 50 {
+	for _ in 0 ..< 50 {
 		key := random_key("odis:test:roundtrip:", gen)
 		value := random_string(1 + rand.int_max(128, gen), gen)
 

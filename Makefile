@@ -3,6 +3,9 @@
 check:
 	odin check . -no-entry-point
 
+strict:
+	odin check . -no-entry-point -strict-style -vet
+
 test:
 	odin test .
 
