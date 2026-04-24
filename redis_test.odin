@@ -21,7 +21,7 @@ destroy_test_client_context :: proc(data: rawptr) {
 		if err == .None || err == .Server_Error {
 			destroy_reply(&reply)
 		}
-		delete(ctx.key)
+		delete(ctx.key, context.allocator)
 	}
 	if ctx.client.connected {
 		close(&ctx.client)

@@ -69,7 +69,7 @@ destroy_reply :: proc(reply: ^Reply, allocator := context.allocator) {
 	for i in 0 ..< len(reply.elements) {
 		destroy_reply(&reply.elements[i], allocator)
 	}
-	delete(reply.elements)
+	delete(reply.elements, allocator)
 	reply^ = {}
 }
 
@@ -89,7 +89,7 @@ close :: proc(client: ^Client) {
 	}
 	client.connected = false
 	delete(client.buffer)
-	client.buffer = nil
+	client.buffer = {}
 	client.buffer_start = 0
 	delete(client.last_server_error, client.allocator)
 	client.last_server_error = ""
@@ -105,6 +105,10 @@ Inputs:
 - allocator: allocator used for client-owned memory
 
 Returns: connected client and optional error
+
+Note: if AUTH or SELECT fails with a server error, the returned error is
+`.Server_Error` but the server message is not available — the client is
+closed before returning and `last_server_error` is not carried back.
 */
 connect_with_config :: proc(
 	config: Config,
@@ -461,10 +465,6 @@ Inputs:
 Returns: dynamic buffer containing the serialized payload
 */
 encode_command :: proc(args: []string, allocator := context.allocator) -> [dynamic]byte {
-	prev_allocator := context.allocator
-	context.allocator = allocator
-	defer context.allocator = prev_allocator
-
 	builder := strings.builder_make(allocator)
 	defer delete(builder.buf)
 
@@ -644,7 +644,7 @@ Returns: read line and optional error
 */
 read_line :: proc(client: ^Client, allocator := context.allocator) -> (string, Error) {
 	for {
-		for i in client.buffer_start ..< len(client.buffer) - 1 {
+		for i in client.buffer_start ..< max(0, len(client.buffer) - 1) {
 			if client.buffer[i] == '\r' && client.buffer[i + 1] == '\n' {
 				line := strings.clone(string(client.buffer[client.buffer_start:i]), allocator)
 				client.buffer_start = i + 2
@@ -705,9 +705,6 @@ recv_more :: proc(client: ^Client) -> Error {
 		return .Unexpected_EOF
 	}
 
-	prev_allocator := context.allocator
-	context.allocator = client.allocator
-	defer context.allocator = prev_allocator
 	append(&client.buffer, ..temp[:n])
 	return .None
 }
