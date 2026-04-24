@@ -1,5 +1,6 @@
 package redis
 
+import "core:fmt"
 import "core:mem"
 import "core:net"
 import "core:strconv"
@@ -69,7 +70,7 @@ destroy_reply :: proc(reply: ^Reply, allocator := context.allocator) {
 	for i in 0 ..< len(reply.elements) {
 		destroy_reply(&reply.elements[i], allocator)
 	}
-	delete(reply.elements, allocator)
+	delete(reply.elements)
 	reply^ = {}
 }
 
@@ -273,6 +274,80 @@ set_ex :: proc(
 	seconds_buf: [32]byte
 	seconds_text := strconv.write_int(seconds_buf[:], i64(seconds), 10)
 	return command(client, []string{"SET", key, value, "EX", seconds_text}, allocator)
+}
+
+/*
+Writes a boolean value to a Redis key.
+
+The value is encoded as "1" for true and "0" for false.
+
+Inputs:
+- client: connected Redis client
+- key: key to write
+- value: boolean value to store
+- allocator: allocator used for the returned reply
+
+Returns: server reply and optional error
+*/
+set_bool :: proc(client: ^Client, key: string, value: bool, allocator := context.allocator) -> (Reply, Error) {
+	return set(client, key, "1" if value else "0", allocator)
+}
+
+/*
+Writes an integer value to a Redis key.
+
+The value is encoded as a base-10 string.
+
+Inputs:
+- client: connected Redis client
+- key: key to write
+- value: integer value to store
+- allocator: allocator used for the returned reply
+
+Returns: server reply and optional error
+*/
+set_int :: proc(client: ^Client, key: string, value: int, allocator := context.allocator) -> (Reply, Error) {
+	buf: [32]byte
+	text := strconv.write_int(buf[:], i64(value), 10)
+	return set(client, key, text, allocator)
+}
+
+/*
+Writes an f32 value to a Redis key.
+
+The value is encoded with four decimal places (e.g. "3.1416").
+
+Inputs:
+- client: connected Redis client
+- key: key to write
+- value: f32 value to store
+- allocator: allocator used for the returned reply
+
+Returns: server reply and optional error
+*/
+set_f32 :: proc(client: ^Client, key: string, value: f32, allocator := context.allocator) -> (Reply, Error) {
+	buf: [64]byte
+	text := fmt.bprintf(buf[:], "%.4f", value)
+	return set(client, key, text, allocator)
+}
+
+/*
+Writes an f64 value to a Redis key.
+
+The value is encoded with four decimal places (e.g. "3.1416").
+
+Inputs:
+- client: connected Redis client
+- key: key to write
+- value: f64 value to store
+- allocator: allocator used for the returned reply
+
+Returns: server reply and optional error
+*/
+set_f64 :: proc(client: ^Client, key: string, value: f64, allocator := context.allocator) -> (Reply, Error) {
+	buf: [64]byte
+	text := fmt.bprintf(buf[:], "%.4f", value)
+	return set(client, key, text, allocator)
 }
 
 /*
