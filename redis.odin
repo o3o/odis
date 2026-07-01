@@ -1,7 +1,6 @@
 package redis
 
 import "core:fmt"
-import "core:mem"
 import "core:net"
 import "core:strconv"
 import "core:strings"
@@ -46,12 +45,12 @@ Reply :: struct {
 }
 
 Client :: struct {
-	socket:            net.TCP_Socket,
-	connected:         bool,
-	allocator:         mem.Allocator,
-	buffer:            [dynamic]byte,
-	buffer_start:      int,
-	last_server_error: string,
+	socket:                net.TCP_Socket,
+	connected:             bool,
+	buffer:                [dynamic]byte,
+	buffer_start:          int,
+	last_server_error:     [512]byte,
+	last_server_error_len: int,
 }
 
 /*
@@ -64,6 +63,15 @@ Inputs:
 - allocator: allocator used to build the reply
 
 Returns: no values
+
+Note: `allocator` must be the same allocator passed to the command that built
+the reply (e.g. `get`, `command`). Passing a different allocator corrupts the
+heap because `text` strings are freed with the given allocator while
+`elements` uses the one stored inside the dynamic array.
+
+With an arena or temp allocator, individual frees return `.Mode_Not_Implemented`
+and are silently discarded: do NOT call this proc. Use `free_all` or
+`arena_destroy` instead to release all reply memory at once.
 */
 destroy_reply :: proc(reply: ^Reply, allocator := context.allocator) {
 	delete(reply.text, allocator)
@@ -75,9 +83,10 @@ destroy_reply :: proc(reply: ^Reply, allocator := context.allocator) {
 }
 
 /*
-Closes the Redis client and frees the local buffer.
+Closes the Redis client.
 
-It also resets the last server error stored on the client.
+Resets internal state without freeing memory. The caller owns the allocator
+passed to connect and is responsible for releasing it.
 
 Inputs:
 - client: client to close
@@ -89,11 +98,21 @@ close :: proc(client: ^Client) {
 		net.close(client.socket)
 	}
 	client.connected = false
-	delete(client.buffer)
 	client.buffer = {}
 	client.buffer_start = 0
-	delete(client.last_server_error, client.allocator)
-	client.last_server_error = ""
+	client.last_server_error_len = 0
+}
+
+/*
+Returns the last server error message as a string.
+
+Inputs:
+- client: Redis client
+
+Returns: last server error string, empty if none
+*/
+last_error :: proc(client: ^Client) -> string {
+	return string(client.last_server_error[:client.last_server_error_len])
 }
 
 /*
@@ -130,7 +149,6 @@ connect_with_config :: proc(
 
 	client.socket = socket
 	client.connected = true
-	client.allocator = allocator
 	client.buffer = make([dynamic]byte, 0, 0, allocator)
 
 	if len(config.password) > 0 {
@@ -141,7 +159,7 @@ connect_with_config :: proc(
 		}
 		defer destroy_reply(&auth_reply, allocator)
 		if auth_reply.kind == .Error {
-			client.last_server_error = strings.clone(auth_reply.text, client.allocator)
+			client.last_server_error_len = copy(client.last_server_error[:], auth_reply.text)
 			close(&client)
 			return {}, .Server_Error
 		}
@@ -157,7 +175,7 @@ connect_with_config :: proc(
 		}
 		defer destroy_reply(&select_reply, allocator)
 		if select_reply.kind == .Error {
-			client.last_server_error = strings.clone(select_reply.text, client.allocator)
+			client.last_server_error_len = copy(client.last_server_error[:], select_reply.text)
 			close(&client)
 			return {}, .Server_Error
 		}
@@ -374,8 +392,8 @@ del_many :: proc(
 		return {}, .Not_Connected
 	}
 
-	args := make([]string, len(keys) + 1, client.allocator)
-	defer delete(args, client.allocator)
+	args := make([]string, len(keys) + 1)
+	defer delete(args)
 	args[0] = "DEL"
 	for key, i in keys {
 		args[i + 1] = key
@@ -510,10 +528,9 @@ command :: proc(
 		return {}, .Invalid_Argument
 	}
 
-	delete(client.last_server_error, client.allocator)
-	client.last_server_error = ""
+	client.last_server_error_len = 0
 
-	payload := encode_command(args, client.allocator)
+	payload := encode_command(args)
 	defer delete(payload)
 
 	written, send_err := net.send_tcp(client.socket, payload[:])
@@ -523,7 +540,7 @@ command :: proc(
 
 	reply, reply_err := read_reply(client, allocator)
 	if reply_err == .Server_Error {
-		client.last_server_error = strings.clone(reply.text, client.allocator)
+		client.last_server_error_len = copy(client.last_server_error[:], reply.text)
 	}
 	return reply, reply_err
 }

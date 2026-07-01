@@ -24,6 +24,7 @@ destroy_test_client_context :: proc(data: rawptr) {
 		}
 		delete(ctx.key, context.allocator)
 	}
+	delete(ctx.client.buffer)
 	if ctx.client.connected {
 		close(&ctx.client)
 	}
