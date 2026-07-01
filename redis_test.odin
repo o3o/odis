@@ -1,5 +1,6 @@
 package redis
 
+import "core:fmt"
 import "core:math/rand"
 import "core:mem"
 import "core:strings"
@@ -317,4 +318,166 @@ test_random_roundtrip_has_no_leaks :: proc(t: ^testing.T) {
 		randomized_client_roundtrip_leak_check,
 		randomized_client_roundtrip_leak_verifier,
 	)
+}
+
+@(test)
+test_set_ex_rejects_non_positive_seconds :: proc(t: ^testing.T) {
+	ctx := connect_test_client(t)
+	if ctx == nil {
+		return
+	}
+
+	reply_zero, err_zero := set_ex(&ctx.client, "odis:test:set-ex-invalid", "v", 0)
+	defer destroy_reply(&reply_zero)
+	testing.expect_value(t, err_zero, Error.Invalid_Argument)
+
+	reply_neg, err_neg := set_ex(&ctx.client, "odis:test:set-ex-invalid", "v", -1)
+	defer destroy_reply(&reply_neg)
+	testing.expect_value(t, err_neg, Error.Invalid_Argument)
+}
+
+@(test)
+test_set_bool_roundtrip :: proc(t: ^testing.T) {
+	ctx := connect_test_client(t)
+	if ctx == nil {
+		return
+	}
+
+	state := rand.create(t.seed + 2)
+	gen := rand.default_random_generator(&state)
+
+	key := random_key("odis:test:set-bool:", gen)
+	ctx.key = key
+
+	// true deve essere codificato come "1"
+	set_reply_true, set_err_true := set_bool(&ctx.client, key, true)
+	defer destroy_reply(&set_reply_true)
+	if !assert_ok_reply(t, set_reply_true, set_err_true, .Simple_String) {
+		return
+	}
+
+	get_reply_true, get_err_true := get(&ctx.client, key)
+	defer destroy_reply(&get_reply_true)
+	if !assert_ok_reply(t, get_reply_true, get_err_true, .Bulk_String) {
+		return
+	}
+	testing.expect_value(t, get_reply_true.text, "1")
+
+	// false deve essere codificato come "0"
+	set_reply_false, set_err_false := set_bool(&ctx.client, key, false)
+	defer destroy_reply(&set_reply_false)
+	if !assert_ok_reply(t, set_reply_false, set_err_false, .Simple_String) {
+		return
+	}
+
+	get_reply_false, get_err_false := get(&ctx.client, key)
+	defer destroy_reply(&get_reply_false)
+	if !assert_ok_reply(t, get_reply_false, get_err_false, .Bulk_String) {
+		return
+	}
+	testing.expect_value(t, get_reply_false.text, "0")
+}
+
+@(test)
+test_set_int_roundtrip :: proc(t: ^testing.T) {
+	ctx := connect_test_client(t)
+	if ctx == nil {
+		return
+	}
+
+	state := rand.create(t.seed + 3)
+	gen := rand.default_random_generator(&state)
+
+	key := random_key("odis:test:set-int:", gen)
+	ctx.key = key
+
+	cases := [][2]string{{"0", "0"}, {"42", "42"}, {"-7", "-7"}}
+	values := []int{0, 42, -7}
+
+	for i in 0 ..< len(values) {
+		set_reply, set_err := set_int(&ctx.client, key, values[i])
+		if !assert_ok_reply(t, set_reply, set_err, .Simple_String) {
+			destroy_reply(&set_reply)
+			return
+		}
+		destroy_reply(&set_reply)
+
+		get_reply, get_err := get(&ctx.client, key)
+		if !assert_ok_reply(t, get_reply, get_err, .Bulk_String) {
+			destroy_reply(&get_reply)
+			return
+		}
+		testing.expect_value(t, get_reply.text, cases[i][1])
+		destroy_reply(&get_reply)
+	}
+}
+
+@(test)
+test_set_f32_roundtrip :: proc(t: ^testing.T) {
+	ctx := connect_test_client(t)
+	if ctx == nil {
+		return
+	}
+
+	state := rand.create(t.seed + 4)
+	gen := rand.default_random_generator(&state)
+
+	key := random_key("odis:test:set-f32:", gen)
+	ctx.key = key
+
+	values := []f32{0.0, 3.14159, -2.5, 1000.0}
+	for v in values {
+		set_reply, set_err := set_f32(&ctx.client, key, v)
+		if !assert_ok_reply(t, set_reply, set_err, .Simple_String) {
+			destroy_reply(&set_reply)
+			return
+		}
+		destroy_reply(&set_reply)
+
+		get_reply, get_err := get(&ctx.client, key)
+		if !assert_ok_reply(t, get_reply, get_err, .Bulk_String) {
+			destroy_reply(&get_reply)
+			return
+		}
+
+		buf: [64]byte
+		expected := fmt.bprintf(buf[:], "%.4f", v)
+		testing.expect_value(t, get_reply.text, expected)
+		destroy_reply(&get_reply)
+	}
+}
+
+@(test)
+test_set_f64_roundtrip :: proc(t: ^testing.T) {
+	ctx := connect_test_client(t)
+	if ctx == nil {
+		return
+	}
+
+	state := rand.create(t.seed + 5)
+	gen := rand.default_random_generator(&state)
+
+	key := random_key("odis:test:set-f64:", gen)
+	ctx.key = key
+
+	values := []f64{0.0, 3.141592653589793, -2.5, 1000.0}
+	for v in values {
+		set_reply, set_err := set_f64(&ctx.client, key, v)
+		if !assert_ok_reply(t, set_reply, set_err, .Simple_String) {
+			destroy_reply(&set_reply)
+			return
+		}
+		destroy_reply(&set_reply)
+
+		get_reply, get_err := get(&ctx.client, key)
+		if !assert_ok_reply(t, get_reply, get_err, .Bulk_String) {
+			destroy_reply(&get_reply)
+			return
+		}
+
+		buf: [64]byte
+		expected := fmt.bprintf(buf[:], "%.4f", v)
+		testing.expect_value(t, get_reply.text, expected)
+		destroy_reply(&get_reply)
+	}
 }
