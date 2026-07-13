@@ -239,6 +239,21 @@ get :: proc(client: ^Client, key: string, allocator := context.allocator) -> (Re
 }
 
 /*
+Get the value of key and delete the key. 
+This command is similar to GET, 
+except for the fact that it also deletes the key on success 
+(if and only if the key's value type is a string).
+
+Inputs:
+- client: connected Redis client
+- key: key to read
+- allocator: allocator used for the returned reply
+*/
+getdel :: proc(client: ^Client, key: string, allocator := context.allocator) -> (Reply, Error) {
+	return command(client, []string{"GETDEL", key}, allocator)
+}
+
+/*
 Writes a value to a Redis key.
 
 Internally it sends the `SET` command.
